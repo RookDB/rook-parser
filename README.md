@@ -59,3 +59,6 @@
 ---
 ![Parser](assets/Parser.png)
 
+![Query outline](assets/queryoutline.png)
+![Parsing Example](assets/parsing_example.png)
+![query processing steps](assets/query_processing_steps.png)
