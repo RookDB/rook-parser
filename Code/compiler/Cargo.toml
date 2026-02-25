@@ -1,0 +1,13 @@
+[package]
+name = "lexical_parser"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+sqlparser = "0.48"
+log = "0.4"
+env_logger = "0.11"
+
+[[bin]]
+name = "lexical_parser"
+path = "src/main.rs"
