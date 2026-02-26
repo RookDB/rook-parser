@@ -1,5 +1,5 @@
-use lexical_parser::parser::SyntacticParser;
-use lexical_parser::LexicalParser;
+use rook_parser::parser::SyntacticParser;
+use rook_parser::LexicalParser;
 use std::io::{self, Read, Write};
 
 fn run_query(query: &str) {

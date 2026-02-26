@@ -121,15 +121,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "lexical_parser"
-version = "0.1.0"
-dependencies = [
- "env_logger",
- "log",
- "sqlparser",
-]
-
-[[package]]
 name = "log"
 version = "0.4.29"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -208,6 +199,15 @@ name = "regex-syntax"
 version = "0.8.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7a2d987857b319362043e95f5353c0535c1f58eec5336fdfcf626430af7def58"
+
+[[package]]
+name = "rook-parser"
+version = "0.1.0"
+dependencies = [
+ "env_logger",
+ "log",
+ "sqlparser",
+]
 
 [[package]]
 name = "serde_core"
