@@ -4,6 +4,9 @@ use sqlparser::tokenizer::Tokenizer;
 
 pub mod ast;
 pub mod parser;
+use crate::ast::Statement;
+use crate::parser::SyntacticParser;
+
 
 /// Represents a lexical token in the SQL query
 #[derive(Debug, Clone, PartialEq)]
@@ -247,4 +250,14 @@ impl LexicalParser {
         println!("{}", "=".repeat(50));
         println!("Total tokens: {}\n", filtered.len());
     }
+}
+
+pub fn parse_sql(sql: &str) -> Result<Statement, String> {
+    let mut lexer = LexicalParser::new(sql.to_string());
+    lexer.tokenize()?;
+
+    let tokens = lexer.get_tokens().to_vec();
+    let mut parser = SyntacticParser::new(tokens);
+
+    parser.parse().map_err(|e| e.to_string())
 }
