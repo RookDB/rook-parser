@@ -1,12 +1,12 @@
 [package]
 name = "rook-parser"
-version = "0.1.2"
+version = "0.1.3"
 edition = "2024"
 
 description = "SQL parser layer for RookDB built using DataFusion sqlparser"
-license = "MIT"
+license = "Apache-2.0"
 readme = "README.md"
-repository = "https://github.com/your-username/rook-parser"
+repository = "https://github.com/RookDB/rook-parser"
 
 exclude = [
     "Books/*",
@@ -20,6 +20,4 @@ exclude = [
 ]
 
 [dependencies]
-sqlparser = "0.48"
-log = "0.4"
-env_logger = "0.11"
+sqlparser = "0.61.0"
