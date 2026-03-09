@@ -1,5 +1,6 @@
 use sqlparser::dialect::GenericDialect;
 use sqlparser::parser::Parser;
+use serde_json;
 use std::io::{self, Write};
 
 fn main() {
@@ -25,11 +26,13 @@ fn main() {
         match Parser::parse_sql(&dialect, query) {
             Ok(statements) => {
                 for statement in statements {
-                    println!("\nAST:");
+
+                    println!("\nAST Debug:");
                     println!("{:#?}", statement);
 
-                    println!("\nDisplay:");
-                    println!("{}", statement);
+                    println!("\nJSON:");
+                    let json = serde_json::to_string_pretty(&statement).unwrap();
+                    println!("{}", json);
                 }
             }
             Err(e) => {
