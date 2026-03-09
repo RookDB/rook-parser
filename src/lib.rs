@@ -1,4 +1,4 @@
-use sqlparser::ast::Statement;
+pub use sqlparser::ast::Statement;
 use sqlparser::dialect::GenericDialect;
 use sqlparser::parser::Parser;
 
