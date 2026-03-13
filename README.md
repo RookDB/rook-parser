@@ -1,24 +1,12 @@
 # Rook Parser
 
-Rook Parser provides the **query processor layer for RookDB**.  
-It uses **Apache DataFusion's `sqlparser`** to parse SQL queries and generate an **Abstract Syntax Tree (AST)**.
+- Rook Parser provides the **query parsing layer for RookDB**. It parses SQL queries and generates an **Abstract Syntax Tree (AST)** using **Apache DataFusion's `sqlparser`**.
 
-The generated AST is then decoded and used by **RookDB** to process queries according to its internal query execution logic.
+- The generated AST is then converted into a structured JSON format that can be used by the **Storage Engine**.
 
-Crate available at:  
-https://crates.io/crates/rook-parser
+- Crate available at: [Rook Parser Crate](https://crates.io/crates/rook-parser)
 
----
-
-## Overview
-
-Rook Parser performs:
-
-- SQL parsing (syntactic analysis)
-- AST generation using DataFusion's `sqlparser`
-- AST decoding for RookDB query processing
-
-Instead of implementing a custom SQL parser, Rook Parser relies on the **Apache DataFusion SQL parser**, which provides a robust and well-tested SQL grammar.
+- For documentation about Rook Parser, please visit: [Rook Parser Docs](https://rookdb.github.io/docs/Rook-Parser)
 
 ---
 
