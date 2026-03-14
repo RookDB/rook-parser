@@ -16,6 +16,7 @@ pub enum StatementType {
     CreateDatabase,
     ShowTables,
     ShowDatabases,
+    USEDatabase,
     Unknown,
 }
 
@@ -80,6 +81,12 @@ pub struct ShowTablesParams;
 pub struct ShowDatabasesParams;
 
 #[derive(Debug, Serialize)]
+pub struct UseDatabaseParams {
+    pub database: String,
+}
+
+
+#[derive(Debug, Serialize)]
 pub struct UnknownParams;
 
 /* ---------------- PARAM ENUM ---------------- */
@@ -93,5 +100,6 @@ pub enum Params {
     CreateDatabase(CreateDatabaseParams),
     ShowTables(ShowTablesParams),
     ShowDatabases(ShowDatabasesParams),
+    UseDatabase(UseDatabaseParams),
     Unknown(UnknownParams),
 }

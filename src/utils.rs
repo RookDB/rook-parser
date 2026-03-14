@@ -3,7 +3,7 @@ use sqlparser::ast::*;
 use crate::models::{
     Category, ColumnParam, CreateDatabaseParams, CreateTableParams, InsertParams, Params,
     QuerySummary, SelectParams, ShowDatabasesParams, ShowTablesParams, StatementType,
-    TableConstraintParam, UnknownParams,
+    TableConstraintParam, UnknownParams, UseDatabaseParams,
 };
 
 /* ---------------- HELPERS ---------------- */
@@ -36,6 +36,7 @@ pub fn classify_statement(stmt: &Statement) -> (Category, StatementType) {
         Statement::CreateDatabase { .. } => (Category::DDL, StatementType::CreateDatabase),
         Statement::ShowTables { .. } => (Category::DQL, StatementType::ShowTables),
         Statement::ShowDatabases { .. } => (Category::DQL, StatementType::ShowDatabases),
+        Statement::Use(_) => (Category::DDL, StatementType::USEDatabase),
         _ => (Category::UNKNOWN, StatementType::Unknown),
     }
 }
@@ -169,9 +170,7 @@ pub fn build_query_summary(stmt: &Statement) -> QuerySummary {
 
         Statement::Insert(insert) => Params::Insert(extract_insert_params(insert)),
 
-        Statement::CreateTable(create) => {
-            Params::CreateTable(extract_create_table_params(create))
-        }
+        Statement::CreateTable(create) => Params::CreateTable(extract_create_table_params(create)),
 
         Statement::CreateDatabase {
             db_name,
@@ -185,6 +184,10 @@ pub fn build_query_summary(stmt: &Statement) -> QuerySummary {
         Statement::ShowTables { .. } => Params::ShowTables(ShowTablesParams),
 
         Statement::ShowDatabases { .. } => Params::ShowDatabases(ShowDatabasesParams),
+
+        Statement::Use(use_stmt) => Params::UseDatabase(UseDatabaseParams {
+            database: use_stmt.to_string(),
+        }),
 
         _ => Params::Unknown(UnknownParams),
     };
