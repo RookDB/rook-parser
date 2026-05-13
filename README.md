@@ -16,19 +16,4 @@ Run the interactive SQL parser:
 
 ```bash
 cargo run
-```
-
-### Show Help
-
-To see all available commands and options:
-
-```bash
-cargo run -- --help
-```
-
-To see syntax help for a specific command (e.g., `select`, `create-table`):
-
-```bash
-cargo run -- --help select
-cargo run -- --help create-table
-```
+``

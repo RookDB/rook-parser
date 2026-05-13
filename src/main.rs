@@ -7,22 +7,12 @@ mod utils;
 use utils::build_query_summary;
 
 fn main() {
-    let args: Vec<String> = std::env::args().collect();
-    if args.len() > 1 {
-        match args[1].as_str() {
-            "--help" | "-h" => {
-                if args.len() > 2 {
-                    print_statement_help(&args[2]);
-                } else {
-                    print_help();
-                }
-                return;
-            }
-            _ => {}
-        }
-    }
-
     let dialect = GenericDialect {};
+
+    println!("Rook Parser CLI");
+    println!("Type 'help' for available commands.");
+    println!("Type 'help <statement>' for statement help.");
+    println!("Type 'exit' to quit.\n");
 
     loop {
         let mut query = String::new();
@@ -38,6 +28,18 @@ fn main() {
         }
 
         if query.is_empty() {
+            continue;
+        }
+
+        // Handle help commands interactively
+        if query.eq_ignore_ascii_case("help") {
+            print_help();
+            continue;
+        }
+
+        if query.to_lowercase().starts_with("help ") {
+            let statement = query[5..].trim();
+            print_statement_help(statement);
             continue;
         }
 
@@ -62,17 +64,27 @@ fn main() {
 }
 
 fn print_help() {
-    println!("Rook Parser CLI\n");
-    println!("Usage: cargo run -- [OPTIONS]\n");
-    println!("Options:");
-    println!("  -h, --help                 Show this help message and exit");
-    println!(
-        "  --help <statement>         Show help for a statement type (e.g., select, insert, create-table)"
-    );
-    println!("\nDescription:");
-    println!("  Interactive SQL parser using Apache DataFusion's sqlparser.\n");
-    println!("  Enter SQL queries to see their AST and a custom JSON summary.\n");
-    println!("  Type 'exit' to quit the program.\n");
+    println!("\nAvailable Commands:\n");
+
+    println!("  help");
+    println!("      Show general help.\n");
+
+    println!("  help <statement>");
+    println!("      Show help for a specific SQL statement.\n");
+
+    println!("Supported statements:");
+    println!("  select");
+    println!("  insert");
+    println!("  create-table");
+    println!("  create-database");
+    println!("  show-tables");
+    println!("  show-databases");
+    println!("  use\n");
+
+    println!("Examples:");
+    println!("  help select");
+    println!("  help insert");
+    println!("  SELECT * FROM users;\n");
 }
 
 fn print_statement_help(statement: &str) {
@@ -125,4 +137,3 @@ fn print_statement_help(statement: &str) {
         }
     }
 }
-
