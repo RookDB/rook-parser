@@ -16,4 +16,4 @@ Run the interactive SQL parser:
 
 ```bash
 cargo run
-```
+``
