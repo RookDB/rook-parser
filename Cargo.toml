@@ -1,6 +1,6 @@
 [package]
 name = "rook-parser"
-version = "0.1.9"
+version = "0.2.0"
 edition = "2024"
 
 description = "SQL parser layer for RookDB built using DataFusion sqlparser"

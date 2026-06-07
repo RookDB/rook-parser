@@ -164,11 +164,22 @@ pub fn extract_update_params(update_stmt: &sqlparser::ast::Update) -> UpdatePara
 /* ---------------- DELETE PARAM EXTRACTION ---------------- */
 
 pub fn extract_delete_params(delete_stmt: &sqlparser::ast::Delete) -> DeleteParams {
-    let table_name = delete_stmt
-        .tables
-        .first()
-        .map(|t| t.to_string())
-        .unwrap_or_default();
+    let mut table_name = String::new();
+    let tables = match &delete_stmt.from {
+        sqlparser::ast::FromTable::WithFromKeyword(t) | sqlparser::ast::FromTable::WithoutKeyword(t) => t,
+    };
+    if let Some(table) = tables.first() {
+        if let sqlparser::ast::TableFactor::Table { name, .. } = &table.relation {
+            table_name = name.to_string();
+        }
+    }
+    if table_name.is_empty() {
+        table_name = delete_stmt
+            .tables
+            .first()
+            .map(|t| t.to_string())
+            .unwrap_or_default();
+    }
 
     let filters = delete_stmt
         .selection
