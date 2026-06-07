@@ -1,9 +1,9 @@
 use sqlparser::ast::*;
 
 use crate::models::{
-    Category, ColumnParam, CreateDatabaseParams, CreateTableParams, InsertParams, Params,
-    QuerySummary, SelectParams, ShowDatabasesParams, ShowTablesParams, StatementType,
-    TableConstraintParam, UnknownParams, UseDatabaseParams,
+    Category, ColumnParam, CreateDatabaseParams, CreateTableParams, DeleteParams,
+    InsertParams, Params, QuerySummary, SelectParams, ShowDatabasesParams, ShowTablesParams,
+    StatementType, TableConstraintParam, UnknownParams, UpdateParams, UseDatabaseParams,
 };
 
 /* ---------------- HELPERS ---------------- */
@@ -32,6 +32,8 @@ pub fn classify_statement(stmt: &Statement) -> (Category, StatementType) {
     match stmt {
         Statement::Query(_) => (Category::DQL, StatementType::Select),
         Statement::Insert(_) => (Category::DML, StatementType::Insert),
+        Statement::Update { .. } => (Category::DML, StatementType::Update),
+        Statement::Delete { .. } => (Category::DML, StatementType::Delete),
         Statement::CreateTable(_) => (Category::DDL, StatementType::CreateTable),
         Statement::CreateDatabase { .. } => (Category::DDL, StatementType::CreateDatabase),
         Statement::ShowTables { .. } => (Category::DQL, StatementType::ShowTables),
@@ -125,6 +127,61 @@ pub fn extract_insert_params(insert: &Insert) -> InsertParams {
     }
 }
 
+/* ---------------- UPDATE PARAM EXTRACTION ---------------- */
+
+pub fn extract_update_params(update_stmt: &sqlparser::ast::Update) -> UpdateParams {
+    let table_name = if let TableFactor::Table { name, .. } = &update_stmt.table.relation {
+        name.to_string()
+    } else {
+        String::new()
+    };
+
+    let assignment_strs = update_stmt
+        .assignments
+        .iter()
+        .map(|a| {
+            let col_name = match &a.target {
+                sqlparser::ast::AssignmentTarget::ColumnName(name) => name.to_string(),
+                sqlparser::ast::AssignmentTarget::Tuple(_) => "tuple".to_string(),
+            };
+            format!("{} = {}", col_name, a.value)
+        })
+        .collect::<Vec<_>>();
+
+    let filters = update_stmt
+        .selection
+        .as_ref()
+        .map(|s| vec![s.to_string()])
+        .unwrap_or_default();
+
+    UpdateParams {
+        table: table_name,
+        assignments: assignment_strs,
+        filters,
+    }
+}
+
+/* ---------------- DELETE PARAM EXTRACTION ---------------- */
+
+pub fn extract_delete_params(delete_stmt: &sqlparser::ast::Delete) -> DeleteParams {
+    let table_name = delete_stmt
+        .tables
+        .first()
+        .map(|t| t.to_string())
+        .unwrap_or_default();
+
+    let filters = delete_stmt
+        .selection
+        .as_ref()
+        .map(|s| vec![s.to_string()])
+        .unwrap_or_default();
+
+    DeleteParams {
+        table: table_name,
+        filters,
+    }
+}
+
 /* ---------------- CREATE TABLE PARAM EXTRACTION ---------------- */
 
 pub fn extract_create_table_params(create: &CreateTable) -> CreateTableParams {
@@ -169,6 +226,10 @@ pub fn build_query_summary(stmt: &Statement) -> QuerySummary {
         }
 
         Statement::Insert(insert) => Params::Insert(extract_insert_params(insert)),
+
+        Statement::Update(update) => Params::Update(extract_update_params(update)),
+
+        Statement::Delete(delete) => Params::Delete(extract_delete_params(delete)),
 
         Statement::CreateTable(create) => Params::CreateTable(extract_create_table_params(create)),
 

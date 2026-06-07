@@ -12,6 +12,8 @@ pub enum Category {
 pub enum StatementType {
     Select,
     Insert,
+    Update,
+    Delete,
     CreateTable,
     CreateDatabase,
     ShowTables,
@@ -85,6 +87,18 @@ pub struct UseDatabaseParams {
     pub database: String,
 }
 
+#[derive(Debug, Serialize)]
+pub struct UpdateParams {
+    pub table: String,
+    pub assignments: Vec<String>,
+    pub filters: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct DeleteParams {
+    pub table: String,
+    pub filters: Vec<String>,
+}
 
 #[derive(Debug, Serialize)]
 pub struct UnknownParams;
@@ -96,6 +110,8 @@ pub struct UnknownParams;
 pub enum Params {
     Select(SelectParams),
     Insert(InsertParams),
+    Update(UpdateParams),
+    Delete(DeleteParams),
     CreateTable(CreateTableParams),
     CreateDatabase(CreateDatabaseParams),
     ShowTables(ShowTablesParams),
