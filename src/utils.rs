@@ -14,6 +14,67 @@ use rook_ast::LimitClause as RookLimitClause;
 
 // ── Top-level dispatch ────────────────────────────────────────────────────────
 
+/// Validate an identifier that will be used as part of a filesystem path.
+///
+/// Defense-in-depth alongside the engine's own `name_validation` module:
+/// rejects empty names, path separators (`/`, `\\`), `..` segments, leading
+/// dots, NUL/control characters, and overlong names before any plan is built.
+fn check_identifier(name: &str, kind: &str) -> Result<(), String> {
+    fn invalid(name: &str, kind: &str, why: &str) -> String {
+        format!("Invalid {} name '{}': {}", kind, name, why)
+    }
+    if name.is_empty() {
+        return Err(invalid(name, kind, "cannot be empty"));
+    }
+    if name.len() > 255 {
+        return Err(invalid(name, kind, "exceeds the 255 character limit"));
+    }
+    if name.chars().any(|c| c == '/' || c == '\\' || c == '\0' || c.is_control()) {
+        return Err(invalid(name, kind, "contains forbidden characters"));
+    }
+    if name.starts_with('.') {
+        return Err(invalid(name, kind, "cannot start with a dot"));
+    }
+    if name == ".."
+        || name.split('/').any(|seg| seg == "..")
+        || name.split('\\').any(|seg| seg == "..")
+    {
+        return Err(invalid(name, kind, "cannot contain '..' path segments"));
+    }
+    Ok(())
+}
+
+/// Public wrapper around [`check_identifier`] for statement types matched
+/// outside the grammar dispatch (e.g. VACUUM).
+///
+/// `allow(dead_code)`: the standalone parser CLI binary also compiles this
+/// module without calling it.
+#[allow(dead_code)]
+pub fn check_identifier_public(name: &str, kind: &str) -> Result<(), String> {
+    check_identifier(name, kind)
+}
+
+/// Validate every identifier segment of a (possibly qualified) object name.
+///
+/// Uses the *raw* identifier values — `ObjectName`'s Display re-quotes
+/// delimited identifiers (e.g. `` `..` `` renders as `".."`), which would
+/// silently bypass the path-segment checks.
+fn check_object_name(name: &ObjectName, kind: &str) -> Result<(), String> {
+    for part in &name.0 {
+        match part.as_ident() {
+            Some(ident) => check_identifier(&ident.value, kind)?,
+            None => {
+                return Err(format!(
+                    "Invalid {} name '{}': unsupported name form",
+                    kind,
+                    part
+                ))
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Build a `QueryPlan` from a parsed sqlparser `Statement`.
 pub fn build_query_plan(stmt: &Statement) -> Result<QueryPlan, String> {
     match stmt {
@@ -126,12 +187,14 @@ pub fn build_query_plan(stmt: &Statement) -> Result<QueryPlan, String> {
         }
         Statement::CreateTable(create) => {
             // If the CREATE TABLE has a query body, it's CREATE TABLE ... AS SELECT
+            check_object_name(&create.name, "table")?;
+            let table_name = create.name.to_string();
             if create.query.is_some() {
                 let query = create.query.as_ref().unwrap();
                 let select_plan = extract_select_params(query)?;
                 return Ok(QueryPlan::CreateTableAsSelect(
                     rook_ast::CreateTableAsSelectPlan {
-                        table: create.name.to_string(),
+                        table: table_name,
                         query: Box::new(select_plan),
                     },
                 ));
@@ -143,23 +206,41 @@ pub fn build_query_plan(stmt: &Statement) -> Result<QueryPlan, String> {
             db_name,
             if_not_exists,
             ..
-        } => Ok(QueryPlan::CreateDatabase(CreateDatabasePlan {
-            database: db_name.to_string(),
-            if_not_exists: *if_not_exists,
-        })),
+        } => {
+            check_object_name(db_name, "database")?;
+            let database = db_name.to_string();
+            Ok(QueryPlan::CreateDatabase(CreateDatabasePlan {
+                database,
+                if_not_exists: *if_not_exists,
+            }))
+        }
         Statement::CreateIndex(ci) => {
+            check_object_name(&ci.table_name, "table")?;
             let table_name = ci.table_name.to_string();
-            let column_name = match ci.columns.first() {
-                Some(oe) => match &oe.column.expr {
-                    Expr::Identifier(ident) => ident.value.clone(),
-                    _ => return Err("CREATE INDEX requires a simple column reference, not an expression".to_string()),
-                },
-                None => return Err("CREATE INDEX requires at least one column".to_string()),
-            };
+            if let Some(n) = &ci.name {
+                check_object_name(n, "index")?;
+            }
+            // Collect every indexed column — multiple columns form a
+            // composite key. Expressions are not supported.
+            let mut columns = Vec::new();
+            for oe in &ci.columns {
+                match &oe.column.expr {
+                    Expr::Identifier(ident) => columns.push(ident.value.clone()),
+                    _ => {
+                        return Err(
+                            "CREATE INDEX requires simple column references, not expressions"
+                                .to_string(),
+                        )
+                    }
+                }
+            }
+            if columns.is_empty() {
+                return Err("CREATE INDEX requires at least one column".to_string());
+            }
             Ok(QueryPlan::CreateIndex(CreateIndexPlan {
                 index_name: ci.name.as_ref().map(|n| n.to_string()).unwrap_or_default(),
                 table_name,
-                column_name,
+                columns,
             }))
         }
         Statement::Drop {
@@ -175,6 +256,9 @@ pub fn build_query_plan(stmt: &Statement) -> Result<QueryPlan, String> {
             match object_type {
                 // DROP TABLE
                 ObjectType::Table => {
+                    if let Some(name) = names.first() {
+                        check_object_name(name, "table")?;
+                    }
                     let table_name = names
                         .first()
                         .map(|n| n.to_string())
@@ -187,6 +271,9 @@ pub fn build_query_plan(stmt: &Statement) -> Result<QueryPlan, String> {
                 }
                 // DROP INDEX
                 ObjectType::Index => {
+                    if let Some(name) = names.first() {
+                        check_object_name(name, "index")?;
+                    }
                     let index_name = names
                         .first()
                         .map(|n| n.to_string())
@@ -215,6 +302,9 @@ pub fn build_query_plan(stmt: &Statement) -> Result<QueryPlan, String> {
                 }
                 // DROP DATABASE
                 ObjectType::Database => {
+                    if let Some(name) = names.first() {
+                        check_object_name(name, "database")?;
+                    }
                     let db_name = names
                         .first()
                         .map(|n| n.to_string())
@@ -228,6 +318,7 @@ pub fn build_query_plan(stmt: &Statement) -> Result<QueryPlan, String> {
             }
         }
         Statement::AlterTable(alter_table) => {
+            check_object_name(&alter_table.name, "table")?;
             let table = alter_table.name.to_string();
             // Only handle the first operation for now
             let action = match alter_table.operations.first() {
@@ -271,6 +362,7 @@ pub fn build_query_plan(stmt: &Statement) -> Result<QueryPlan, String> {
                     let new_name = match table_name {
                         RenameTableNameKind::To(name) | RenameTableNameKind::As(name) => name.to_string(),
                     };
+                    check_identifier(&new_name, "table")?;
                     AlterTableAction::RenameTable { new_name }
                 },
                 Some(AlterTableOperation::AlterColumn {
@@ -331,6 +423,9 @@ pub fn build_query_plan(stmt: &Statement) -> Result<QueryPlan, String> {
             }))
         }
         Statement::Truncate(truncate) => {
+            if let Some(target) = truncate.table_names.first() {
+                check_object_name(&target.name, "table")?;
+            }
             let table = truncate
                 .table_names
                 .first()
@@ -353,6 +448,13 @@ pub fn build_query_plan(stmt: &Statement) -> Result<QueryPlan, String> {
             } else {
                 text.trim().to_string()
             };
+            // Strip any quoting the Display impl may have added.
+            let unquoted = db_name
+                .trim_matches('`')
+                .trim_matches('"')
+                .trim_matches('\'')
+                .to_string();
+            check_identifier(&unquoted, "database")?;
             Ok(QueryPlan::UseDatabase(db_name))
         }
         _ => Ok(QueryPlan::Unknown(stmt.to_string())),
