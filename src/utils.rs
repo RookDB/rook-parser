@@ -887,29 +887,56 @@ fn extract_insert_params(insert: &Insert) -> Result<InsertPlan, String> {
 // ── CREATE TABLE extraction ───────────────────────────────────────────────────
 
 fn extract_create_table_params(create: &CreateTable) -> Result<CreateTablePlan, String> {
-    let columns = create
-        .columns
-        .iter()
-        .map(|col| {
-            Ok(ColumnDef {
-                name: col.name.to_string(),
-                data_type: col.data_type.to_string(),
-                constraints: col
-                    .options
-                    .iter()
-                    .map(|opt| opt.option.to_string())
-                    .collect(),
-            })
-        })
-        .collect::<Result<Vec<_>, String>>()?;
-
-    let constraints = create
+    // Column-level `REFERENCES tbl(cols)` is valid SQL for foreign keys.
+    // The engine's FK machinery consumes table-level constraint strings, so
+    // inline definitions are normalised into that same form here (appended
+    // to `constraints`) and dropped from the column's own option list —
+    // previously they were stringified onto the column and silently
+    // ignored, creating tables whose FKs never enforced.
+    let mut constraints: Vec<TableConstraintDef> = create
         .constraints
         .iter()
         .map(|c| TableConstraintDef {
             definition: c.to_string(),
         })
-        .collect::<Vec<_>>();
+        .collect();
+
+    let columns = create
+        .columns
+        .iter()
+        .map(|col| {
+            let mut col_constraints = Vec::new();
+            for opt in &col.options {
+                match &opt.option {
+                    ColumnOption::ForeignKey(fk) => {
+                        // Renders as `FOREIGN KEY (col) REFERENCES tbl (refs)
+                        // [ON DELETE …] [ON UPDATE …]` — exactly the string
+                        // shape the engine's table-level FK parser accepts.
+                        //
+                        // For column-level definitions sqlparser leaves
+                        // `columns` empty (the column is implied by
+                        // position); the engine's FK checks need the child
+                        // column name, so fill it in explicitly. Without
+                        // this the synthesized constraint has an empty
+                        // column list and rejects EVERY row.
+                        let mut fk = fk.clone();
+                        if fk.columns.is_empty() {
+                            fk.columns = vec![col.name.clone()];
+                        }
+                        constraints.push(TableConstraintDef {
+                            definition: fk.to_string(),
+                        });
+                    }
+                    other => col_constraints.push(other.to_string()),
+                }
+            }
+            Ok(ColumnDef {
+                name: col.name.to_string(),
+                data_type: col.data_type.to_string(),
+                constraints: col_constraints,
+            })
+        })
+        .collect::<Result<Vec<_>, String>>()?;
 
     Ok(CreateTablePlan {
         table: create.name.to_string(),

@@ -85,6 +85,67 @@ fn create_table_keeps_column_constraints() {
 }
 
 #[test]
+fn inline_column_references_become_table_level_fk() {
+    // Column-level `REFERENCES tbl(col)` is valid SQL for foreign keys.
+    // The parser must normalise it into the table-level FOREIGN KEY
+    // constraint string the engine enforces — previously it was stringified
+    // onto the column and silently dropped (orphans inserted freely).
+    let plan = parse_sql(
+        "CREATE TABLE c (id INT, pid INT REFERENCES p(id) ON DELETE CASCADE)",
+    )
+    .unwrap();
+    match plan {
+        QueryPlan::CreateTable(p) => {
+            // The REFERENCES option must NOT remain on the column…
+            let pid_constraints = p.columns[1].constraints.join(" ");
+            assert!(
+                !pid_constraints.to_uppercase().contains("REFERENCES"),
+                "inline REFERENCES leaked onto the column: {}",
+                pid_constraints
+            );
+            // …and must appear as a table-level FK naming BOTH columns.
+            let fk = p
+                .constraints
+                .iter()
+                .map(|c| c.definition.to_uppercase())
+                .find(|d| d.starts_with("FOREIGN KEY"))
+                .expect("inline REFERENCES did not produce a table-level FOREIGN KEY");
+            assert!(fk.contains("PID"), "child column missing: {}", fk);
+            assert!(fk.contains("REFERENCES P"), "parent table missing: {}", fk);
+            assert!(fk.contains("(ID)"), "parent column missing: {}", fk);
+            assert!(fk.contains("ON DELETE CASCADE"), "action missing: {}", fk);
+        }
+        other => panic!("expected CreateTable plan, got {:?}", other),
+    }
+}
+
+#[test]
+fn inline_references_fill_implied_child_column() {
+    // sqlparser leaves ForeignKeyConstraint.columns empty for column-level
+    // definitions (the column is implied). The synthesised table-level
+    // string must name the child column explicitly — an empty list made
+    // the engine reject every row.
+    let plan =
+        parse_sql("CREATE TABLE c (pid INT REFERENCES p(id))").unwrap();
+    match plan {
+        QueryPlan::CreateTable(p) => {
+            let fk = p
+                .constraints
+                .iter()
+                .map(|c| c.definition.to_uppercase())
+                .find(|d| d.starts_with("FOREIGN KEY"))
+                .expect("no FOREIGN KEY constraint produced");
+            assert!(
+                fk.contains("(PID)"),
+                "implied child column not filled in: {}",
+                fk
+            );
+        }
+        other => panic!("expected CreateTable plan, got {:?}", other),
+    }
+}
+
+#[test]
 fn future_statement_types_are_typed_not_json() {
     // These statements must produce typed plans even though execution
     // arrives in later stages — the parser is already SQL-99 aware.
