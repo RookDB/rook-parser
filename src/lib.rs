@@ -192,6 +192,38 @@ fn try_parse_vacuum(sql: &str) -> Result<Option<QueryPlan>, String> {
     }
 }
 
+/// Parse a raw WHERE-clause string into an optional `PredicateNode`.
+///
+/// Returns `Ok(None)` if the text is empty or whitespace only.
+pub fn parse_where_text(text: &str) -> Result<Option<rook_ast::PredicateNode>, String> {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return Ok(None);
+    }
+    let sql = format!("SELECT * FROM __where__ WHERE {}", trimmed);
+    match parse_sql(&sql)? {
+        QueryPlan::Select(select) => Ok(select.selection),
+        other => Err(format!(
+            "WHERE clause did not yield a SELECT statement: {:?}",
+            other.statement_type()
+        )),
+    }
+}
+
+/// Parse a raw CHECK constraint expression string into a `PredicateNode`.
+pub fn parse_check_expr(expr: &str) -> Result<rook_ast::PredicateNode, String> {
+    let sql = format!("SELECT * FROM __check__ WHERE {}", expr);
+    match parse_sql(&sql)? {
+        QueryPlan::Select(select) => select.selection.ok_or_else(|| {
+            format!("CHECK constraint expression '{}' did not yield a predicate", expr)
+        }),
+        other => Err(format!(
+            "CHECK constraint expression did not yield a SELECT statement: {:?}",
+            other.statement_type()
+        )),
+    }
+}
+
 /// Parse a SQL string and return the JSON representation (legacy compatibility).
 ///
 /// Useful for the standalone CLI debug tool and any scripts that consume JSON.
