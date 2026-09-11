@@ -4,7 +4,6 @@ use std::io::{self, Write};
 
 mod utils;
 
-use serde_json;
 
 fn main() {
     let dialect = GenericDialect {};
@@ -55,7 +54,7 @@ fn main() {
                             println!("\nTyped QueryPlan:");
                             println!("  Category: {}", plan.category());
                             println!("  Type:     {}", plan.statement_type());
-                            println!("");
+                            println!();
                             let json = serde_json::to_string_pretty(&plan).unwrap();
                             println!("{}", json);
                         }

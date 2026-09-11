@@ -132,7 +132,7 @@ pub fn build_query_plan(stmt: &Statement) -> Result<QueryPlan, String> {
                         limit: None,
                     }))
                 }
-                _ => return Err("Unsupported query body type".to_string()),
+                _ => Err("Unsupported query body type".to_string()),
             }
         }
         Statement::Insert(insert) => {
@@ -166,7 +166,7 @@ pub fn build_query_plan(stmt: &Statement) -> Result<QueryPlan, String> {
             let selection = update
                 .selection
                 .as_ref()
-                .map(|s| convert_predicate(s))
+                .map(convert_predicate)
                 .transpose()?;
             Ok(QueryPlan::Update(UpdatePlan {
                 table: table_name,
@@ -181,7 +181,7 @@ pub fn build_query_plan(stmt: &Statement) -> Result<QueryPlan, String> {
             let selection = delete
                 .selection
                 .as_ref()
-                .map(|s| convert_predicate(s))
+                .map(convert_predicate)
                 .transpose()?;
             Ok(QueryPlan::Delete(DeletePlan { table, selection }))
         }
@@ -189,8 +189,7 @@ pub fn build_query_plan(stmt: &Statement) -> Result<QueryPlan, String> {
             // If the CREATE TABLE has a query body, it's CREATE TABLE ... AS SELECT
             check_object_name(&create.name, "table")?;
             let table_name = create.name.to_string();
-            if create.query.is_some() {
-                let query = create.query.as_ref().unwrap();
+            if let Some(query) = &create.query {
                 let select_plan = extract_select_params(query)?;
                 return Ok(QueryPlan::CreateTableAsSelect(
                     rook_ast::CreateTableAsSelectPlan {
@@ -382,12 +381,12 @@ pub fn build_query_plan(stmt: &Statement) -> Result<QueryPlan, String> {
                                 column: column_name.to_string(),
                             }
                         }
-                        AlterColumnOperation::SetNotNull { .. } => {
+                        AlterColumnOperation::SetNotNull => {
                             AlterTableAction::SetNotNull {
                                 column: column_name.to_string(),
                             }
                         }
-                        AlterColumnOperation::DropNotNull { .. } => {
+                        AlterColumnOperation::DropNotNull => {
                             AlterTableAction::DropNotNull {
                                 column: column_name.to_string(),
                             }
@@ -528,7 +527,7 @@ pub fn extract_select_params(query: &Query) -> Result<SelectPlan, String> {
                 ctes.push(CteDef {
                     name: name.clone(),
                     query: Box::new(non_recursive),
-                    recursive_term: recursive_term,
+                    recursive_term,
                     union_all,
                 });
                 // Name was already inserted at the start of the recursive block
@@ -602,7 +601,7 @@ pub fn extract_select_params(query: &Query) -> Result<SelectPlan, String> {
                             None
                         }
                     }
-                    _ => return None,
+                    _ => None,
                 }
             }
             SqlLimitClause::OffsetCommaLimit { limit: limit_expr, .. } => {
@@ -645,7 +644,7 @@ fn extract_select_inner(
     let projections: Vec<SelectExpr> = select
         .projection
         .iter()
-        .map(|item| convert_select_item(item))
+        .map(convert_select_item)
         .collect::<Result<Vec<_>, _>>()?;
 
     // ── FROM tables ───────────────────────────────────────────────────────────
@@ -784,14 +783,14 @@ fn extract_select_inner(
     let selection = select
         .selection
         .as_ref()
-        .map(|s| convert_predicate(s))
+        .map(convert_predicate)
         .transpose()?;
 
     // ── GROUP BY ──────────────────────────────────────────────────────────────
     let group_by: Vec<ExprNode> = match &select.group_by {
         GroupByExpr::Expressions(exprs, _) => exprs
             .iter()
-            .map(|e| convert_expr(e))
+            .map(convert_expr)
             .collect::<Result<Vec<_>, _>>()?,
         GroupByExpr::All(_) => Vec::new(),
     };
@@ -800,7 +799,7 @@ fn extract_select_inner(
     let having = select
         .having
         .as_ref()
-        .map(|h| convert_predicate(h))
+        .map(convert_predicate)
         .transpose()?;
 
     Ok(SelectPlan {
@@ -827,11 +826,10 @@ fn extract_delete_table(delete: &Delete) -> String {
         FromTable::WithFromKeyword(tables) => tables,
         FromTable::WithoutKeyword(tables) => tables,
     };
-    if let Some(first) = from_tables.first() {
-        if let TableFactor::Table { name, .. } = &first.relation {
+    if let Some(first) = from_tables.first()
+        && let TableFactor::Table { name, .. } = &first.relation {
             return name.to_string();
         }
-    }
     // MySQL multi-delete: DELETE t1, t2 FROM ...
     if let Some(first) = delete.tables.first() {
         return first.to_string();
@@ -860,7 +858,7 @@ fn extract_insert_params(insert: &Insert) -> Result<InsertPlan, String> {
                     .iter()
                     .map(|row| {
                         row.iter()
-                            .map(|expr| convert_expr(expr))
+                            .map(convert_expr)
                             .collect::<Result<Vec<_>, _>>()
                     })
                     .collect::<Result<Vec<_>, _>>()?;
@@ -1309,7 +1307,7 @@ fn convert_predicate(expr: &Expr) -> Result<PredicateNode, String> {
         } => {
             let items: Vec<ExprNode> = list
                 .iter()
-                .map(|e| convert_expr(e))
+                .map(convert_expr)
                 .collect::<Result<Vec<_>, _>>()?;
             let in_pred = PredicateNode::InList {
                 expr: Box::new(convert_expr(in_expr)?),
