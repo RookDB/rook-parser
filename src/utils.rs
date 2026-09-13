@@ -86,13 +86,13 @@ pub fn build_query_plan(stmt: &Statement) -> Result<QueryPlan, String> {
                     Ok(QueryPlan::Select(select_plan))
                 }
                 SetExpr::SetOperation { op, left, right, set_quantifier } => {
-                    // Build a synthetic Query around each side to capture ORDER BY/LIMIT
+                    // Build a synthetic Query around each side without outer ORDER BY / LIMIT
                     let left_query = Query {
                         with: query.with.clone(),
                         body: Box::new(left.as_ref().clone()),
-                        order_by: query.order_by.clone(),
-                        limit_clause: query.limit_clause.clone(),
-                        fetch: query.fetch.clone(),
+                        order_by: None,
+                        limit_clause: None,
+                        fetch: None,
                         locks: query.locks.clone(),
                         for_clause: query.for_clause.clone(),
                         settings: None,
@@ -122,14 +122,17 @@ pub fn build_query_plan(stmt: &Statement) -> Result<QueryPlan, String> {
                         SetOperator::Except | SetOperator::Minus => "EXCEPT",
                     };
 
+                    let order_by = extract_order_by_from_query(&query.order_by)?;
+                    let limit = extract_limit_from_query(&query.limit_clause);
+
                     Ok(QueryPlan::SetOperation(rook_ast::SetOperationPlan {
                         left: left_plan,
                         right: right_plan,
                         op: op_str.to_string(),
                         all,
                         ctes: Vec::new(), // CTEs extracted from the original query above
-                        order_by: Vec::new(),
-                        limit: None,
+                        order_by,
+                        limit,
                     }))
                 }
                 _ => Err("Unsupported query body type".to_string()),
@@ -462,6 +465,64 @@ pub fn build_query_plan(stmt: &Statement) -> Result<QueryPlan, String> {
 
 // ── SELECT extraction ─────────────────────────────────────────────────────────
 
+pub(crate) fn extract_order_by_from_query(
+    query_order_by: &Option<sqlparser::ast::OrderBy>,
+) -> Result<Vec<OrderByExpr>, String> {
+    match query_order_by {
+        Some(order_by) => match &order_by.kind {
+            OrderByKind::Expressions(exprs) => exprs
+                .iter()
+                .map(|o| {
+                    Ok::<rook_ast::OrderByExpr, String>(OrderByExpr {
+                        expr: convert_expr(&o.expr)?,
+                        ascending: o.options.asc.unwrap_or(true),
+                    })
+                })
+                .collect::<Result<Vec<_>, _>>(),
+            _ => Ok(Vec::new()),
+        },
+        None => Ok(Vec::new()),
+    }
+}
+
+pub(crate) fn extract_limit_from_query(
+    limit_clause: &Option<SqlLimitClause>,
+) -> Option<RookLimitClause> {
+    limit_clause.as_ref().and_then(|lc| {
+        match lc {
+            SqlLimitClause::LimitOffset { limit: limit_opt, offset: offset_opt, limit_by: _ } => {
+                let offset: u64 = match offset_opt {
+                    Some(sqlparser::ast::Offset { value: Expr::Value(v), .. }) => {
+                        v.value.to_string().parse::<u64>().unwrap_or(0)
+                    }
+                    _ => 0,
+                };
+                match limit_opt {
+                    Some(Expr::Value(v)) => {
+                        let limit_val = v.value.to_string().parse::<u64>().ok()?;
+                        Some(RookLimitClause { limit: limit_val, offset: Some(offset) })
+                    }
+                    None => {
+                        if offset > 0 {
+                            Some(RookLimitClause { limit: u64::MAX, offset: Some(offset) })
+                        } else {
+                            None
+                        }
+                    }
+                    _ => None,
+                }
+            }
+            SqlLimitClause::OffsetCommaLimit { limit: limit_expr, .. } => {
+                let limit_val = match limit_expr {
+                    Expr::Value(v) => v.value.to_string().parse::<u64>().ok()?,
+                    _ => return None,
+                };
+                Some(RookLimitClause { limit: limit_val, offset: Some(0) })
+            }
+        }
+    })
+}
+
 /// Extract a full `SelectPlan` from a `Query`, capturing ORDER BY, LIMIT, GROUP BY,
 /// HAVING, and DISTINCT that were previously discarded.
 pub fn extract_select_params(query: &Query) -> Result<SelectPlan, String> {
@@ -561,58 +622,10 @@ pub fn extract_select_params(query: &Query) -> Result<SelectPlan, String> {
     let inner = extract_select_inner(select, &mut cte_names)?;
 
     // ── ORDER BY (from the outer Query, NOT from Select) ──────────────────────
-    let order_by: Vec<OrderByExpr> = match &query.order_by {
-        Some(order_by) => match &order_by.kind {
-            OrderByKind::Expressions(exprs) => exprs
-                .iter()
-                .map(|o| {
-                    Ok::<rook_ast::OrderByExpr, String>(OrderByExpr {
-                        expr: convert_expr(&o.expr)?,
-                        ascending: o.options.asc.unwrap_or(true),
-                    })
-                })
-                .collect::<Result<Vec<_>, _>>()?,
-            _ => Vec::new(),
-        },
-        None => Vec::new(),
-    };
+    let order_by: Vec<OrderByExpr> = extract_order_by_from_query(&query.order_by)?;
 
     // ── LIMIT (from the outer Query) ──────────────────────────────────────────
-    let limit: Option<RookLimitClause> = query.limit_clause.as_ref().and_then(|lc| {
-        match lc {
-            SqlLimitClause::LimitOffset { limit: limit_opt, offset: offset_opt, limit_by: _ } => {
-                // offset_opt is Option<Offset> which has Offset { value: Expr, rows: Option<OffsetRows> }
-                let offset: u64 = match offset_opt {
-                    Some(sqlparser::ast::Offset { value: Expr::Value(v), .. }) => {
-                        v.value.to_string().parse::<u64>().unwrap_or(0)
-                    }
-                    _ => 0,
-                };
-                match limit_opt {
-                    Some(Expr::Value(v)) => {
-                        let limit_val = v.value.to_string().parse::<u64>().ok()?;
-                        Some(RookLimitClause { limit: limit_val, offset: Some(offset) })
-                    }
-                    None => {
-                        // OFFSET without LIMIT — use u64::MAX as "no limit"
-                        if offset > 0 {
-                            Some(RookLimitClause { limit: u64::MAX, offset: Some(offset) })
-                        } else {
-                            None
-                        }
-                    }
-                    _ => None,
-                }
-            }
-            SqlLimitClause::OffsetCommaLimit { limit: limit_expr, .. } => {
-                let limit_val = match limit_expr {
-                    Expr::Value(v) => v.value.to_string().parse::<u64>().ok()?,
-                    _ => return None,
-                };
-                Some(RookLimitClause { limit: limit_val, offset: Some(0) })
-            }
-        }
-    });
+    let limit: Option<RookLimitClause> = extract_limit_from_query(&query.limit_clause);
 
     // Merge WITH-clause CTEs with derived subqueries from FROM/JOIN clauses.
     let mut all_ctes = ctes;
