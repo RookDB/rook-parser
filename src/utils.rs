@@ -1428,6 +1428,12 @@ fn convert_predicate(expr: &Expr) -> Result<PredicateNode, String> {
                 right: Box::new(convert_expr(right)?),
             })
         }
+        Expr::IsNotDistinctFrom(left, right) => {
+            Ok(PredicateNode::Not(Box::new(PredicateNode::IsDistinctFrom {
+                left: Box::new(convert_expr(left)?),
+                right: Box::new(convert_expr(right)?),
+            })))
+        }
         Expr::IsTrue(expr) => {
             // Unwrap Nested to handle `(x > 5) IS TRUE`
             let inner = match expr.as_ref() {
