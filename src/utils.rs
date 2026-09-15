@@ -992,6 +992,54 @@ fn convert_expr(expr: &Expr) -> Result<ExprNode, String> {
                 op: ArithOp::Div,
                 right: Box::new(convert_expr(right)?),
             }),
+            BinaryOperator::StringConcat => Ok(ExprNode::Function {
+                name: "CONCAT".to_string(),
+                args: vec![
+                    FunctionArg::Expr(Box::new(convert_expr(left)?)),
+                    FunctionArg::Expr(Box::new(convert_expr(right)?)),
+                ],
+                distinct: false,
+            }),
+            BinaryOperator::Eq => Ok(ExprNode::Compare {
+                left: Box::new(convert_expr(left)?),
+                op: ComparisonOp::Eq,
+                right: Box::new(convert_expr(right)?),
+            }),
+            BinaryOperator::NotEq => Ok(ExprNode::Compare {
+                left: Box::new(convert_expr(left)?),
+                op: ComparisonOp::Ne,
+                right: Box::new(convert_expr(right)?),
+            }),
+            BinaryOperator::Lt => Ok(ExprNode::Compare {
+                left: Box::new(convert_expr(left)?),
+                op: ComparisonOp::Lt,
+                right: Box::new(convert_expr(right)?),
+            }),
+            BinaryOperator::LtEq => Ok(ExprNode::Compare {
+                left: Box::new(convert_expr(left)?),
+                op: ComparisonOp::Le,
+                right: Box::new(convert_expr(right)?),
+            }),
+            BinaryOperator::Gt => Ok(ExprNode::Compare {
+                left: Box::new(convert_expr(left)?),
+                op: ComparisonOp::Gt,
+                right: Box::new(convert_expr(right)?),
+            }),
+            BinaryOperator::GtEq => Ok(ExprNode::Compare {
+                left: Box::new(convert_expr(left)?),
+                op: ComparisonOp::Ge,
+                right: Box::new(convert_expr(right)?),
+            }),
+            BinaryOperator::And => Ok(ExprNode::Logical {
+                left: Box::new(convert_expr(left)?),
+                op: BinaryOp::And,
+                right: Box::new(convert_expr(right)?),
+            }),
+            BinaryOperator::Or => Ok(ExprNode::Logical {
+                left: Box::new(convert_expr(left)?),
+                op: BinaryOp::Or,
+                right: Box::new(convert_expr(right)?),
+            }),
             _ => Err(format!("Unsupported expression: {:?}", expr)),
         },
         Expr::Nested(inner) => convert_expr(inner),
@@ -1141,6 +1189,18 @@ fn convert_expr(expr: &Expr) -> Result<ExprNode, String> {
                 op: ArithOp::Sub,
                 right: Box::new(inner),
             })
+        }
+        Expr::UnaryOp { op: UnaryOperator::Not, expr } => {
+            let inner = convert_expr(expr)?;
+            Ok(ExprNode::Not(Box::new(inner)))
+        }
+        Expr::IsNull(inner) => {
+            let inner = convert_expr(inner)?;
+            Ok(ExprNode::IsNull(Box::new(inner)))
+        }
+        Expr::IsNotNull(inner) => {
+            let inner = convert_expr(inner)?;
+            Ok(ExprNode::IsNotNull(Box::new(inner)))
         }
         // FLOOR(val) and CEIL(val) / CEILING(val) — sqlparser parses as special
         // Expr variants instead of function calls.
