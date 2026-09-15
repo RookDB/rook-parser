@@ -12,6 +12,49 @@ use rook_ast::{
 use sqlparser::ast::LimitClause as SqlLimitClause;
 use rook_ast::LimitClause as RookLimitClause;
 
+use std::cell::RefCell;
+
+thread_local! {
+    static ACTIVE_CTES: RefCell<Vec<CteDef>> = const { RefCell::new(Vec::new()) };
+}
+
+fn get_active_ctes() -> Vec<CteDef> {
+    ACTIVE_CTES.with(|c| c.borrow().clone())
+}
+
+fn is_active_cte(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    ACTIVE_CTES.with(|c| c.borrow().iter().any(|cte| cte.name.eq_ignore_ascii_case(&lower)))
+}
+
+fn add_active_cte(cte: CteDef) {
+    ACTIVE_CTES.with(|c| {
+        let mut list = c.borrow_mut();
+        if let Some(pos) = list.iter().position(|existing| existing.name.eq_ignore_ascii_case(&cte.name)) {
+            list[pos] = cte;
+        } else {
+            list.push(cte);
+        }
+    });
+}
+
+struct CteScopeGuard {
+    prev: Vec<CteDef>,
+}
+
+impl Drop for CteScopeGuard {
+    fn drop(&mut self) {
+        ACTIVE_CTES.with(|c| {
+            *c.borrow_mut() = std::mem::take(&mut self.prev);
+        });
+    }
+}
+
+fn push_cte_scope() -> CteScopeGuard {
+    let prev = get_active_ctes();
+    CteScopeGuard { prev }
+}
+
 // ── Top-level dispatch ────────────────────────────────────────────────────────
 
 /// Validate an identifier that will be used as part of a filesystem path.
@@ -100,13 +143,13 @@ pub fn build_query_plan(stmt: &Statement) -> Result<QueryPlan, String> {
                         pipe_operators: Vec::new(),
                     };
                     let right_query = Query {
-                        with: None,
+                        with: query.with.clone(),
                         body: Box::new(right.as_ref().clone()),
                         order_by: None,
                         limit_clause: None,
                         fetch: None,
-                        locks: Vec::new(),
-                        for_clause: None,
+                        locks: query.locks.clone(),
+                        for_clause: query.for_clause.clone(),
                         settings: None,
                         format_clause: None,
                         pipe_operators: Vec::new(),
@@ -526,6 +569,8 @@ pub(crate) fn extract_limit_from_query(
 /// Extract a full `SelectPlan` from a `Query`, capturing ORDER BY, LIMIT, GROUP BY,
 /// HAVING, and DISTINCT that were previously discarded.
 pub fn extract_select_params(query: &Query) -> Result<SelectPlan, String> {
+    let _scope_guard = push_cte_scope();
+
     // ── CTEs (WITH clause) ────────────────────────────────────────────────────
     //
     // Collect non-recursive CTEs from the WITH clause if present.
@@ -534,7 +579,8 @@ pub fn extract_select_params(query: &Query) -> Result<SelectPlan, String> {
     // flagged with the special `__cte__:<name>` prefix understood by the
     // logical planner.
     let mut ctes: Vec<CteDef> = Vec::new();
-    let mut cte_names: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut cte_names: std::collections::HashSet<String> =
+        get_active_ctes().into_iter().map(|c| c.name.to_ascii_lowercase()).collect();
 
     if let Some(with) = &query.with {
         for cte_tbl in &with.cte_tables {
@@ -585,22 +631,26 @@ pub fn extract_select_params(query: &Query) -> Result<SelectPlan, String> {
                         }
                     };
 
-                ctes.push(CteDef {
+                let def = CteDef {
                     name: name.clone(),
                     query: Box::new(non_recursive),
                     recursive_term,
                     union_all,
-                });
+                };
+                add_active_cte(def.clone());
+                ctes.push(def);
                 // Name was already inserted at the start of the recursive block
             } else {
                 // Non-recursive CTE: normal parsing
                 let inner_plan = extract_select_params(&cte_tbl.query)?;
-                ctes.push(CteDef {
+                let def = CteDef {
                     name: name.clone(),
                     query: Box::new(inner_plan),
                     recursive_term: None,
                     union_all: false,
-                });
+                };
+                add_active_cte(def.clone());
+                ctes.push(def);
                 cte_names.insert(name.to_ascii_lowercase());
             }
         }
@@ -627,8 +677,13 @@ pub fn extract_select_params(query: &Query) -> Result<SelectPlan, String> {
     // ── LIMIT (from the outer Query) ──────────────────────────────────────────
     let limit: Option<RookLimitClause> = extract_limit_from_query(&query.limit_clause);
 
-    // Merge WITH-clause CTEs with derived subqueries from FROM/JOIN clauses.
-    let mut all_ctes = ctes;
+    // Merge WITH-clause CTEs with active outer CTEs and derived subqueries.
+    let mut all_ctes = get_active_ctes();
+    for c in ctes {
+        if !all_ctes.iter().any(|x| x.name.eq_ignore_ascii_case(&c.name)) {
+            all_ctes.push(c);
+        }
+    }
     all_ctes.extend(inner.ctes);
 
     Ok(SelectPlan {
@@ -673,7 +728,7 @@ fn extract_select_inner(
             let raw_name = name.to_string();
             // If the table name matches a CTE name, use the __cte__:<name> prefix
             // so the planner can distinguish it from a real heap table.
-            let resolved_name = if cte_names.contains(&raw_name.to_ascii_lowercase()) {
+            let resolved_name = if cte_names.contains(&raw_name.to_ascii_lowercase()) || is_active_cte(&raw_name) {
                 format!("__cte__:{}", raw_name)
             } else {
                 raw_name
@@ -710,7 +765,13 @@ fn extract_select_inner(
             // Resolve the join relation — could be a table or a derived subquery
             let (join_relation_name, join_relation_alias) = match &join.relation {
                 TableFactor::Table { name, alias, .. } => {
-                    (name.to_string(), alias.as_ref().map(|a| a.name.value.clone()))
+                    let raw_name = name.to_string();
+                    let resolved = if cte_names.contains(&raw_name.to_ascii_lowercase()) || is_active_cte(&raw_name) {
+                        format!("__cte__:{}", raw_name)
+                    } else {
+                        raw_name
+                    };
+                    (resolved, alias.as_ref().map(|a| a.name.value.clone()))
                 }
                 TableFactor::Derived { subquery, alias, .. } => {
                     // Recursively parse the derived table and add to CTE definitions
