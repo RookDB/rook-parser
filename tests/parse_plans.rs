@@ -170,3 +170,73 @@ fn future_statement_types_are_typed_not_json() {
 fn syntax_errors_are_reported() {
     assert!(parse_sql("SELEC * FROM t").is_err());
 }
+
+// ── Multi-line statements ─────────────────────────────────────────────────────
+//
+// The REPL buffers lines until a statement terminator, so SELECTs routinely
+// arrive with embedded newlines. Newlines inside a statement are plain
+// whitespace to the tokenizer — every clause boundary below must therefore
+// parse identically to its single-line form. These tests pin that behaviour
+// (each case once failed with `Expected: end of statement` when newlines
+// were stripped instead of preserved, e.g. "FROM emp" + "GROUP BY dept"
+// concatenating into "empGROUP BY dept").
+
+fn assert_parses(sql: &str) {
+    if let Err(e) = parse_sql(sql) {
+        panic!("multi-line statement failed to parse: {}\n--- SQL ---\n{}", e, sql);
+    }
+}
+
+#[test]
+fn multiline_select_at_every_clause_boundary() {
+    assert_parses(
+        "SELECT dept, COUNT(*)\nFROM emp\nGROUP BY dept\nHAVING COUNT(*) > 0\nORDER BY 2 DESC\nLIMIT 5",
+    );
+}
+
+#[test]
+fn multiline_where_after_from() {
+    assert_parses("SELECT *\nFROM emp\nWHERE dept = 10");
+}
+
+#[test]
+fn multiline_join_boundaries() {
+    assert_parses(
+        "SELECT e.name, d.name\nFROM emp e\nJOIN dept d ON e.dept = d.id\nWHERE d.name = 'eng'\nORDER BY e.name",
+    );
+}
+
+#[test]
+fn multiline_cte_and_derived_table() {
+    assert_parses("WITH big AS (\nSELECT * FROM emp WHERE dept = 10)\nSELECT * FROM big");
+    assert_parses("SELECT *\nFROM (\nSELECT id FROM emp\n) t");
+}
+
+#[test]
+fn multiline_comments_and_strings() {
+    // Line comments, block comments spanning lines, and string literals
+    // containing newlines must not confuse statement handling.
+    assert_parses(
+        "SELECT name -- pick the name\nFROM emp /* inline\ncomment */\nWHERE name = 'multi\nline'",
+    );
+}
+
+#[test]
+fn multiline_insert_and_create_still_work() {
+    assert_parses("INSERT INTO emp VALUES (\n1, 'ada', 10, 3500\n)");
+    assert_parses("CREATE TABLE t (\n  id INT,\n  name VARCHAR(20)\n)");
+}
+
+#[test]
+fn multiline_select_is_plan_equivalent_to_single_line() {
+    let single = parse_sql("SELECT name, sal FROM emp WHERE dept = 10 ORDER BY sal LIMIT 3").unwrap();
+    let multi = parse_sql(
+        "SELECT name, sal\nFROM emp\nWHERE dept = 10\nORDER BY sal\nLIMIT 3",
+    )
+    .unwrap();
+    assert_eq!(
+        format!("{:?}", single),
+        format!("{:?}", multi),
+        "whitespace between clauses must not change the plan"
+    );
+}
