@@ -140,8 +140,11 @@ fn split_by_top_level_comma(s: &str) -> Vec<&str> {
 /// This replaces the earlier `parse_sql` that returned a JSON string —
 /// now callers get a strongly-typed AST directly.
 pub fn parse_sql(sql: &str) -> Result<QueryPlan, String> {
-    // Maintenance statements the grammar doesn't cover: VACUUM [TABLE] <name>.
+    // Maintenance statements the grammar doesn't cover: VACUUM [TABLE] <name>, ANALYZE [TABLE] <name>.
     if let Some(plan) = try_parse_vacuum(sql)? {
+        return Ok(plan);
+    }
+    if let Some(plan) = try_parse_analyze(sql)? {
         return Ok(plan);
     }
 
@@ -189,6 +192,36 @@ fn try_parse_vacuum(sql: &str) -> Result<Option<QueryPlan>, String> {
                 .map(|_| Some(QueryPlan::Vacuum(rook_ast::VacuumPlan { table: table.to_string() })))
         }
         _ => Err("VACUUM accepts at most one table name".to_string()),
+    }
+}
+
+/// Recognise `ANALYZE [TABLE] <name>` before grammar parsing.
+///
+/// Collects column statistics (histograms, HLL distinct counts) into `sys_statistics`.
+fn try_parse_analyze(sql: &str) -> Result<Option<QueryPlan>, String> {
+    let trimmed = sql.trim().trim_end_matches(';').trim();
+    let mut parts = trimmed.split_whitespace();
+    let Some(first) = parts.next() else {
+        return Ok(None);
+    };
+    if !first.eq_ignore_ascii_case("ANALYZE") {
+        return Ok(None);
+    }
+
+    let mut rest = parts.collect::<Vec<_>>();
+    // Optional TABLE keyword: ANALYZE TABLE users == ANALYZE users.
+    if rest.first().map(|w| w.eq_ignore_ascii_case("TABLE")).unwrap_or(false) {
+        rest.remove(0);
+    }
+
+    match rest.len() {
+        0 => Err("ANALYZE requires a table name: ANALYZE [TABLE] <name>".to_string()),
+        1 => {
+            let table = rest[0].trim_matches('`').trim_matches('"').trim_matches('\'');
+            utils::check_identifier_public(table, "table")
+                .map(|_| Some(QueryPlan::Analyze(rook_ast::AnalyzePlan { table: table.to_string() })))
+        }
+        _ => Err("ANALYZE accepts at most one table name".to_string()),
     }
 }
 
