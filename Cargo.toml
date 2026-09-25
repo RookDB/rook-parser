@@ -1,6 +1,6 @@
 [package]
 name = "rook-parser"
-version = "0.1.7"
+version = "0.2.0"
 edition = "2024"
 
 description = "SQL parser layer for RookDB built using DataFusion sqlparser"
@@ -20,6 +20,7 @@ exclude = [
 ]
 
 [dependencies]
+rook-ast = { path = "../rook-ast" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0.149"
 sqlparser = { version = "0.61.0", features = ["serde"] }

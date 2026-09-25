@@ -2,14 +2,13 @@ use sqlparser::dialect::GenericDialect;
 use sqlparser::parser::Parser;
 use std::io::{self, Write};
 
-mod models;
 mod utils;
-use utils::build_query_summary;
+
 
 fn main() {
     let dialect = GenericDialect {};
 
-    println!("Rook Parser CLI");
+    println!("Rook Parser CLI (v0.2.0 — rook-ast powered)");
     println!("Type 'help' for available commands.");
     println!("Type 'help <statement>' for statement help.");
     println!("Type 'exit' to quit.\n");
@@ -49,11 +48,20 @@ fn main() {
                     println!("\nAST Debug:");
                     println!("{:#?}", statement);
 
-                    let summary = build_query_summary(&statement);
-
-                    println!("\nCustom JSON:");
-                    let json = serde_json::to_string_pretty(&summary).unwrap();
-                    println!("{}", json);
+                    // Use the new typed QueryPlan
+                    match crate::utils::build_query_plan(&statement) {
+                        Ok(plan) => {
+                            println!("\nTyped QueryPlan:");
+                            println!("  Category: {}", plan.category());
+                            println!("  Type:     {}", plan.statement_type());
+                            println!();
+                            let json = serde_json::to_string_pretty(&plan).unwrap();
+                            println!("{}", json);
+                        }
+                        Err(e) => {
+                            println!("\nPlan error: {}", e);
+                        }
+                    }
                 }
             }
             Err(e) => {
